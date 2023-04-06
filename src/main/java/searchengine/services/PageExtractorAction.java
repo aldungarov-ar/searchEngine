@@ -1,0 +1,181 @@
+package searchengine.services;
+
+import org.jsoup.Connection;
+import org.jsoup.HttpStatusException;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
+import searchengine.dto.PageRepository;
+import searchengine.dto.SiteRepository;
+import searchengine.model.Page;
+import searchengine.model.Site;
+
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.List;
+import java.util.concurrent.RecursiveAction;
+
+public class PageExtractorAction extends RecursiveAction {
+    private static final String USER_AGENT = "WondererSearchBot";
+    private static final String REFERRER = "http://www.google.com";
+    private static final int MIN_DELAY = 50;
+    private static final int MAX_DELAY = 1000;
+
+    private final String url;
+    private final List<String> controlList;
+    private final Page page;
+    private final Site site;
+    private final PageRepository pageRepository;
+    private final SiteRepository siteRepository;
+
+    private Connection connection;
+
+    public PageExtractorAction(String url,
+                               List<String> controlList,
+                               Site site,
+                               PageRepository pageRepository,
+                               SiteRepository siteRepository) {
+        this.url = url;
+        this.controlList = controlList;
+        this.site = site;
+        this.pageRepository = pageRepository;
+        this.siteRepository = siteRepository;
+        this.page = new Page();
+    }
+
+    @Override
+    protected void compute() {
+        if(!IndexingServiceImpl.inProgress) {
+            return;
+        }
+
+        page.setSiteId(site);
+        String pageUrl = getPageUrl();
+        page.setPath(pageUrl);
+
+        Document pageAsDocument = getPageAsDocument();
+
+        int statusCode = getStatusCode();
+        page.setCode(statusCode);
+
+        page.setContent(pageAsDocument == null ? null : pageAsDocument.toString());
+
+        pageRepository.save(page);
+
+        updateSiteStatusTime();
+
+        if(!IndexingServiceImpl.inProgress) {
+            return;
+        }
+
+        if (statusCode != 200 || pageAsDocument == null) {
+            return;
+        }
+
+        Elements linkElements = pageAsDocument.select("a");
+        HashSet<String> validLinks = validateLinks(linkElements);
+
+        for (String link : validLinks) {
+            controlList.add(link);
+            PageExtractorAction task = new PageExtractorAction(link, controlList, site,
+                    pageRepository, siteRepository);
+            task.fork();
+        }
+    }
+
+    private String getPageUrl() {
+        String pageUrl = url.replace(site.getUrl(), "");
+        pageUrl = pageUrl.isBlank() ? url : pageUrl;
+        return pageUrl;
+    }
+
+    private Document getPageAsDocument() {
+        connection = Jsoup.connect(url)
+                .userAgent(USER_AGENT)
+                .referrer(REFERRER);
+
+        System.out.println("Parsing: " + url);
+        Document document;
+
+        try {
+            Thread.sleep((int) ((Math.random() * MIN_DELAY) + MAX_DELAY));
+            document = connection.get();
+        } catch (HttpStatusException statusException) {
+            page.setCode(statusException.getStatusCode());
+            System.out.println(url + " - STATUS FAILURE");
+            return null;
+        } catch (IOException ioException) {
+            System.out.println(url + " - ILLEGAL ARGUMENT");
+            return null;
+        } catch (InterruptedException interruptedException) {
+            throw new RuntimeException(interruptedException);
+        }
+
+        return document;
+    }
+
+    private int getStatusCode() {
+        int statusCode = 0;
+        if (page.getCode() == 0) {
+            statusCode = connection.response().statusCode();
+        }
+        return statusCode;
+    }
+
+    private void updateSiteStatusTime() {
+        site.setStatusTime(LocalDateTime.now());
+        siteRepository.save(site);
+    }
+
+    private HashSet<String> validateLinks(Elements linkElements) {
+        HashSet<String> validLinks = new HashSet<>();
+
+        for (Element link : linkElements) {
+            String href = link.absUrl("href");
+
+            // Check if link is contains space (link is not valid in this case)
+            if (href.contains(" ")) {
+                continue;
+            }
+
+            // Check if url starts with the same "http" ot "https" protocol
+            // Then check if amy other thread already parsed this link
+            String httpSVar = url.split("://", 2)[0];
+            if (!href.startsWith(httpSVar)) {
+                continue;
+            } else if (controlList.contains(href)) {
+                continue;
+            }
+
+            if (href.split("/").length <= url.split("/").length) {
+                continue;
+            }
+
+            if (href.endsWith(".jpg")) {
+                continue;
+            }
+
+            // Check if link is external by checking its general name
+            // like "skillbox.ru"
+            // Then check if this link is internal service
+            boolean linkIsExternal = false;
+            boolean linkIsInnerService = false;
+            String[] split = href.split("/");
+            String rootGeneralNamePart = controlList.get(0).split("/")[2];
+            rootGeneralNamePart = rootGeneralNamePart.replace("www.", "");
+            if (split.length > 2) {
+                linkIsExternal = !split[2].equals(rootGeneralNamePart)
+                        && !split[2].equals("www." + rootGeneralNamePart);
+                linkIsInnerService = split[split.length - 1].contains("#");
+            }
+
+            if (!linkIsExternal && !linkIsInnerService) {
+                validLinks.add(href);
+            }
+
+        }
+        return validLinks;
+    }
+}
