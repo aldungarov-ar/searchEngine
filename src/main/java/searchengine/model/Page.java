@@ -7,10 +7,11 @@ import org.hibernate.annotations.OnDeleteAction;
 
 import javax.persistence.*;
 import javax.persistence.Index;
+import java.util.Set;
 
 @Getter
 @Setter
-@Entity
+@Entity(name = "page")
 @Table(indexes = {
         @Index(name = "path_index",
                 columnList = "path",
@@ -35,4 +36,8 @@ public class Page {
 
     @Column(columnDefinition = "MEDIUMTEXT")
     private String content;
+
+    @OneToMany(mappedBy = "pageId")
+    @OnDelete(action = OnDeleteAction.CASCADE)
+    Set<searchengine.model.Index> indexes;
 }

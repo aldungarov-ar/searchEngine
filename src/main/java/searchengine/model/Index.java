@@ -2,14 +2,12 @@ package searchengine.model;
 
 import lombok.Getter;
 import lombok.Setter;
-import org.hibernate.annotations.OnDelete;
-import org.hibernate.annotations.OnDeleteAction;
 
 import javax.persistence.*;
 
 @Getter
 @Setter
-@Entity
+@Entity(name = "`index`")
 public class Index {
     @Id
     @GeneratedValue(strategy = GenerationType.AUTO)
@@ -17,13 +15,12 @@ public class Index {
 
     @ManyToOne
     @JoinColumn(name = "page_id", nullable = false)
-    @OnDelete(action = OnDeleteAction.CASCADE)
     private Page pageId;
 
     @ManyToOne
-    @JoinColumn(name = "lemma_id", nullable = false)
+    @JoinColumn(name = "lemma_id")
     private Lemma lemmaId;
 
-    @Column(nullable = false)
+    @Column(name = "`rank`", nullable = false)
     private float rank;
 }

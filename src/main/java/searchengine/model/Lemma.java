@@ -2,9 +2,11 @@ package searchengine.model;
 
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 
 import javax.persistence.*;
-import java.util.List;
+import java.util.Set;
 
 @Getter
 @Setter
@@ -14,12 +16,17 @@ public class Lemma {
     @GeneratedValue(strategy = GenerationType.AUTO)
     private int id;
 
-    // TODO Many to many on "index" table
-    private List<Site> siteId;
+    @ManyToOne
+    @OnDelete(action = OnDeleteAction.CASCADE)
+    @JoinColumn(name = "site_id")
+    private Site siteId;
 
     @Column(columnDefinition = "VARCHAR(255)", nullable = false)
     private String lemma;
 
     @Column(nullable = false)
     private int frequency;
+
+    @OneToMany(mappedBy = "lemmaId", cascade = CascadeType.REFRESH)
+    Set<Index> indexes;
 }
