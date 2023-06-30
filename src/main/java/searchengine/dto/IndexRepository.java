@@ -8,6 +8,7 @@ import searchengine.model.Lemma;
 import searchengine.model.Page;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface IndexRepository extends JpaRepository<Index, Long> {
@@ -15,6 +16,10 @@ public interface IndexRepository extends JpaRepository<Index, Long> {
     @Query(nativeQuery = true,
             value = "select * from `index` where `index`.lemma_id=?1")
     List<Index> findByLemmaId(Lemma lemma);
+
+    @Query(nativeQuery = true,
+            value = "select * from `index` where `index`.lemma_id=?1")
+    List<Index> findByLemmaId(int lemmaId);
 
     @Query(nativeQuery = true,
             value = "select * from `index` where `index`.page_id=?1")
@@ -37,4 +42,8 @@ public interface IndexRepository extends JpaRepository<Index, Long> {
     @Query(nativeQuery = true,
             value = "SELECT * FROM search_engine.index i where i.lemma_id = :lemmaId AND i.page_id = :pageId;")
     Index findIndexWithLemmaAndPage(int lemmaId, int pageId);
+
+    @Query(nativeQuery = true,
+            value = "SELECT * FROM search_engine.`index` i where i.lemma_id = :lemmaId AND i.page_id = :pageId")
+        List<Index> findByLemmaIdAndPageId(int lemmaId, int pageId);
 }

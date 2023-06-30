@@ -10,156 +10,141 @@ import searchengine.model.*;
 import java.util.*;
 
 @Service
-@RequiredArgsConstructor
 public class SearchServiceImpl implements SearchService {
 
     public static final int HIGH_FREQUENCY = 100;
     public static final int WORDS_AROUND = 5;
 
-    private int offset;
-    private int limit;
+    @Autowired
+    private final TextProcessor textProcessor;
+    @Autowired
+    private final LemmaRepository lemmaRepository;
+    @Autowired
+    private final IndexRepository indexRepository;
 
-    @Autowired
-    private TextProcessor textProcessor;
-    @Autowired
-    private LemmaRepository lemmaRepository;
-    @Autowired
-    private IndexRepository indexRepository;
+    public SearchServiceImpl(TextProcessor textProcessor,
+                             LemmaRepository lemmaRepository,
+                             IndexRepository indexRepository) {
+        this.textProcessor = textProcessor;
+        this.lemmaRepository = lemmaRepository;
+        this.indexRepository = indexRepository;
+    }
 
     @Override
     public RequestAnswer search(String query, int offset, int limit) {
-        query = query.toLowerCase();
-        ArrayList<String> queryLemmas = new ArrayList<>(
-                textProcessor.countLemmas(query).keySet());
+        List<String> queryWords = splitQueryForLemmas(query);
 
-        ArrayList<Lemma> lemmas = new ArrayList<>();
-        for (String lemma : queryLemmas) {
-            List<Lemma> lemmaList = lemmaRepository.findByLemma(lemma);
-            if (lemmaList.isEmpty()) {
-                continue;
+        // ---------Checks if query is empty or no such lemmas was found in DB---------
+        if (queryWords.isEmpty()) {
+            return new RequestAnswer(false, "No results found");
+        }
+
+        List<Lemma> queryLemmas = new ArrayList<>();
+        for (String queryWord : queryWords) {
+            queryLemmas.addAll(lemmaRepository.findByLemma(queryWord));
+            if (queryLemmas.isEmpty()) {
+                return new RequestAnswer(false, "No results found");
             }
-            lemmas.add(lemmaList.get(0));
         }
+        // -----------------------------------------------------------------------------
 
-        if (lemmas.isEmpty()) {
-            return new RequestAnswer(false, "Lemmas with frequency lower than " +
-                    HIGH_FREQUENCY + " not found.");
-        }
 
-        Iterator<Lemma> iterator = lemmas.iterator();
+        //----------Removes high frequency lemmas and sorts from rare to common---------
+
+        Iterator<Lemma> iterator = queryLemmas.iterator();
         while (iterator.hasNext()) {
             Lemma lemma = iterator.next();
-            if (lemma.getFrequency() > HIGH_FREQUENCY) {
+            if (lemma.getFrequency() > HIGH_FREQUENCY && queryLemmas.size() > 1) {
                 iterator.remove();
             }
         }
 
-        // TODO add check if lemma from query is not exist in DB
+        queryLemmas.sort(Comparator.comparing(Lemma::getFrequency).reversed());
+        // ----------------------------------------------------------------------------
 
-        lemmas.sort(Comparator.comparingInt(Lemma::getFrequency)
-                .reversed()); // TODO possibly there is a way to leave only lemmas Id's
+        Set<Page> pages = new HashSet<>();
+        indexRepository.findByLemmaId(queryLemmas.get(0).getId()).forEach(index -> pages.add(index.getPageId()));
 
-        List<Index> indexesForRarestLemma = indexRepository.findByLemmaId(lemmas.get(0));
-        if (indexesForRarestLemma.isEmpty()) {
-            return null; // TODO create correct answer for case
-        }
-        ArrayList<Page> pages = new ArrayList<>();
-        for (Index index : indexesForRarestLemma) {
-            Page page = index.getPageId();
-            pages.add(page);
-        }
-
-        Iterator<Page> pagesIterator = pages.iterator();
-        for (Lemma lemma : lemmas) {
-            List<Index> indexes = indexRepository.findByLemmaId(lemma);
-            if (indexes.isEmpty()) {
-                continue;
+        //---------Removes pages that don't contain all query lemmas---------
+        for (int i = 1; i < queryLemmas.size(); i++) {
+            Iterator<Page> pageIterator = pages.iterator();
+            while (pageIterator.hasNext()) {
+                Page page = pageIterator.next();
+                if (indexRepository.findByLemmaIdAndPageId(queryLemmas.get(i).getId(), page.getId()).isEmpty()) {
+                    pageIterator.remove();
+                }
             }
-            ArrayList<Page> pagesWithLemma = new ArrayList<>();
-            for (Index index : indexes) {
-                pagesWithLemma.add(index.getPageId());
-            }
-            pages.retainAll(pagesWithLemma);
         }
+        // -----------------------------------------------------------------
 
         if (pages.isEmpty()) {
-            return null;
+            return new RequestAnswer(false, "No results found");
         }
 
-        HashMap<Page, Double[]> relevanceTable = new HashMap<>();
-        //This is the "head" of relevance table
-        String[] queueWords = new String[lemmas.size()];
-        for (int i = 0; i < lemmas.size(); i++) {
-            queueWords[i] = lemmas.get(i).getLemma();
-        }
 
+        //---------Calculates absolute relevance of each page---------
+        HashMap<Page, Double[]> pagesRelevance = new HashMap<>();
         double maxAbsoluteRelevance = 0.0;
+
         for (Page page : pages) {
-            // For now, last array element is relative relevance, and last-1 element is absolute relevance
-            relevanceTable.put(page, new Double[queueWords.length + 2]);
-
-            for (int i = 0; i < queueWords.length + 2; i++) {
-                relevanceTable.get(page)[i] = 0.0;
-            }
-
-            Double[] row = relevanceTable.get(page);
-            String content = page.getContent();
-            String[] words = content.split("\\s+");
-
-            for (int i = 0; i < queueWords.length; i++) {
-                String queueWord = queueWords[i];
-                Double relevance = calculateRelevance(queueWord, words);
-
-                 row[i] = relevance;
-            }
-
+            Double[] relevanceValues = new Double[queryLemmas.size() + 2];
+            relevanceValues[0] = 0.0;
             double absoluteRelevance = 0.0;
-            for (int i = 0; i < row.length - 2; i++) {
-                absoluteRelevance += row[i];
+            for (int i = 0; i < queryLemmas.size(); i++) {
+                List<Index> indexes = indexRepository.findByLemmaIdAndPageId(queryLemmas.get(i).getId(), page.getId());
+                relevanceValues[i] = (double) indexes.get(0).getRank();
+                absoluteRelevance += relevanceValues[i];
             }
-            row[row.length - 1] = absoluteRelevance;
 
-            maxAbsoluteRelevance = Math.max(maxAbsoluteRelevance, absoluteRelevance);
+            relevanceValues[queryLemmas.size()] = absoluteRelevance;
+            pagesRelevance.put(page, relevanceValues);
+
+            if (absoluteRelevance > maxAbsoluteRelevance) {
+                maxAbsoluteRelevance = absoluteRelevance;
+            }
         }
+        //----------------------------------------------------
 
-        for (Map.Entry<Page, Double[]> entry : relevanceTable.entrySet()) {
-            Double[] row = entry.getValue();
-            Double absoluteRelevance = row[row.length - 2];
-            row[row.length - 1] = absoluteRelevance / maxAbsoluteRelevance;
+
+        //---------Calculates relative relevance of each page---------
+        for (Map.Entry<Page, Double[]> entry : pagesRelevance.entrySet()) {
+            Double[] relevanceValues = entry.getValue();
+            relevanceValues[queryLemmas.size() + 1] = relevanceValues[queryLemmas.size()] / maxAbsoluteRelevance;
         }
+        //------------------------------------------------------------
 
-        PageByRelativeRelevanceComparator pageByRelativeRelevanceComparator
-                = new PageByRelativeRelevanceComparator(relevanceTable);
-        TreeMap<Page, Double[]> mapOfPagesSortedByRelativeRelevance
-                = new TreeMap<>(pageByRelativeRelevanceComparator);
+        //---------Sorts pages by relative relevance---------
+        List<Page> sortedPages = new ArrayList<>(pagesRelevance.keySet());
+        sortedPages.sort(new PageByRelativeRelevanceComparator(pagesRelevance));
+        //----------------------------------------------------
 
+        //---------Creates Search result for each page---------
         ArrayList<SearchResult> searchResults = new ArrayList<>();
-        SearchRequestAnswer searchRequestAnswer = new SearchRequestAnswer(
-                mapOfPagesSortedByRelativeRelevance.size(), searchResults);
-
-        int index = 0;
-        for(Map.Entry<Page, Double[]> entry : mapOfPagesSortedByRelativeRelevance.entrySet()) {
-            if (index <= offset) {
-                index++;
-            } else if (index >= limit ||
-                    index >= mapOfPagesSortedByRelativeRelevance.entrySet().size()) {
-                break;
-            } else {
-                Page page = entry.getKey();
-                String site = page.getSiteId().getUrl();
-                String siteName = page.getSiteId().getName();
-                String uri = page.getPath();
-                String title = getTitle(page);
-                String snippet = createSnippet(page.getContent(), query);
-                double relevance = entry.getValue()[entry.getValue().length - 1];
-                SearchResult searchResult = new SearchResult(site, siteName, uri, title, snippet, relevance);
-
-                searchRequestAnswer.addSearchResult(searchResult);
-            }
+        for(int i = offset; i < limit; i++) {
+            Page page = sortedPages.get(i);
+            SearchResult searchResult = new SearchResult(page.getSiteId().getUrl(),
+                    page.getSiteId().getName(),
+                    page.getPath(),
+                    getTitle(page),
+                    createSnippet(page.getContent(), query),
+                    pagesRelevance.get(page)[queryLemmas.size() + 1]);
+            searchResults.add(searchResult);
         }
+        //----------------------------------------------------
 
 
-        return searchRequestAnswer;
+        return new SearchRequestAnswer(pages.size(), searchResults);
+    }
+
+    private List<String> splitQueryForLemmas(String query) {
+        query = query.toLowerCase();
+        query = textProcessor.removePunctuation(query);
+        String[] split = query.split(" ");
+        List<String> queryWords = new ArrayList<>(Arrays.asList(split));
+        queryWords.removeIf(String::isEmpty);
+        queryWords.forEach(textProcessor::getLemma);
+
+        return queryWords;
     }
 
     private String getTitle(Page page) {
@@ -195,29 +180,8 @@ public class SearchServiceImpl implements SearchService {
             Double bRelativeRelevance = bRelevanceValues[bRelevanceValues.length - 1];
 
 
-            if (aRelativeRelevance >= bRelativeRelevance) {
-                return -1;
-            } else {
-                return 1;
-            }
+            return bRelativeRelevance.compareTo(aRelativeRelevance);
         }
-    }
-
-    private Double calculateRelevance(String queueWord, String[] text) {
-        double entriesCount = 0.0;
-        for (String word : text) {
-            word = word.toLowerCase();
-            word = word.replaceAll("[^а-яa-z0-9]", "");
-            word = textProcessor.getLemma(word);
-            if (word.equals(queueWord)) {
-                    entriesCount++;
-            }
-        }
-
-        if (entriesCount == 0.0) {
-            return 0.0;
-        }
-        return entriesCount / text.length;
     }
 
 
@@ -225,60 +189,37 @@ public class SearchServiceImpl implements SearchService {
      * Gets snippet from given text (pageContent) based on first word in a query
      *
      * @param pageContent text will be used for creating query
-     * @param query string value of query
-     *
-     * @return snippet contains (WORD_AROUND * 2) number of words if possible and surrounded by "...",
+     * @param query       string value of query
+     * @return snippet contains (WORDS_AROUND * 2) number of words if possible and surrounded by "...",
      * each word of query surrounded by <b> tag
      */
     private String createSnippet(String pageContent, String query) {
-        String content = pageContent.toLowerCase();
-        String[] contentWords = content.split("\\s+");
+        String pageText = textProcessor.removePunctuation(pageContent);
+        String pageTextInLemmas = String.join(" ", textProcessor.countLemmas(pageText).keySet());
+        String queryLemma = textProcessor.getLemma(query.split(" ")[0]);
 
-        String[] contentWordsLemmas = new String[contentWords.length];
-        for (int i = 0; i < contentWords.length; i++) {
-            String lemma = textProcessor.getLemma(contentWords[i]).equals("") ? contentWords[i] :
-                    textProcessor.getLemma(contentWords[i]);
-            contentWordsLemmas[i] = lemma;
-        }
+        int queryLemmaIndex = pageTextInLemmas.indexOf(queryLemma);
 
-        String[] queryLemmas = query.split("\\s+");
-        for (String word : queryLemmas) {
-            word = textProcessor.getLemma(word);
-        }
-        String queryFirstWordLemma = queryLemmas[0];
+        if (queryLemmaIndex != -1) {
+            int snippetStartIndex = queryLemmaIndex - WORDS_AROUND * 2;
+            int snippetEndIndex = queryLemmaIndex + WORDS_AROUND * 2;
 
-        int rarestWordIndex = -1;
-        for (int i = 0; i < contentWords.length; i++) {
-            if (contentWordsLemmas[i].equals(queryFirstWordLemma)) {
-                rarestWordIndex = i;
+            if (snippetStartIndex < 0) {
+                snippetStartIndex = 0;
             }
-        }
 
-        ArrayList<String> queryLemmasList = new ArrayList<>(List.of(queryLemmas));
-        StringBuilder snippet = new StringBuilder();
-        int startIndex = Math.max((rarestWordIndex - WORDS_AROUND), 0);
-        if (startIndex > 0) {
-            snippet.append("...");
-        }
-        int endIndex = Math.min((rarestWordIndex + WORDS_AROUND), contentWords.length);
-
-        for (int i = startIndex; i < endIndex; i++) {
-            if (queryLemmasList.contains(contentWordsLemmas[startIndex + i])) {
-                snippet.append("<b>");
+            if (snippetEndIndex > pageText.length()) {
+                snippetEndIndex = pageText.length();
             }
-            snippet.append(contentWords[startIndex + i]);
-            snippet.append(" ");
-            if (queryLemmasList.contains(contentWordsLemmas[startIndex + i])) {
-                snippet.append("</b>");
-            }
+
+            String snippet = pageText.substring(snippetStartIndex, snippetEndIndex);
+            snippet = snippet.replaceAll(queryLemma, "<b>" + queryLemma + "</b>");
+            snippet = "..." + snippet + "...";
+
+            return snippet;
+        } else {
+            return "";
         }
-
-        if (endIndex == contentWords.length) {
-            snippet.append("...");
-        }
-
-
-        return snippet.toString();
     }
 
 }

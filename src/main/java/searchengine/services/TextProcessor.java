@@ -9,7 +9,7 @@ import java.util.*;
 
 @Component
 public class TextProcessor {
-    private static final String[] FUNCTIONAL_PROPERTIES = new String[] {"МЕЖД", "ПРЕДЛ", "СОЮЗ"};
+    private static final String[] FUNCTIONAL_PROPERTIES = new String[]{"МЕЖД", "ПРЕДЛ", "СОЮЗ"};
     private final RussianLuceneMorphology luceneMorphology;
 
     public TextProcessor() throws IOException {
@@ -28,38 +28,40 @@ public class TextProcessor {
 
         for (String word : words) {
 
-            String info = luceneMorphology.getMorphInfo(word).get(0);
-            word = info.split("\\|")[0];
-
-            if (!wordIsFunctional(word)) {
-                if (lemmas.containsKey(word)) {
-                    lemmas.put(word, lemmas.get(word) + 1);
-                } else {
-                    lemmas.put(word, 1);
-                }
-            }
+            String lemma = getLemma(word);
+            lemmas.put(lemma, lemmas.getOrDefault(lemma, 0) + 1);
         }
 
         return lemmas;
     }
 
     /**
-     * Method will clean the text leaving only russian words LowerCase
+     * Method will clean the text leaving only words and numbers LowerCase
      *
      * @param text text to clean
-     * @return array of russian words LowerCase
+     * @return array of words and numbers LowerCase without punctuation
      */
     private String[] prepareText(String text) {
+
         return text.toLowerCase(Locale.ROOT)
-                .replaceAll("([^а-я\\s])", " ")
+                .replaceAll("<[^>]*>", "")
+                .replaceAll("([^а-яa-z\\d])", " ")
+                .replaceAll("ё", "е")
+                .replaceAll("\\s+", " ")
                 .trim()
                 .split("\\s+");
     }
 
     public boolean wordIsFunctional(String word) {
+        if (word.length() == 0) {
+            return false;
+        } else if (wordIsInLatin(word) || wordIsNumeric(word)) {
+            return false;
+        }
+
         List<String> morphInfo = luceneMorphology.getMorphInfo(word);
 
-        for(String property : FUNCTIONAL_PROPERTIES) {
+        for (String property : FUNCTIONAL_PROPERTIES) {
             if (morphInfo.get(0).contains(property)) {
                 return true;
             }
@@ -75,8 +77,12 @@ public class TextProcessor {
      * @return lemma for given word
      */
     public String getLemma(String word) {
-        if (wordIsInLatin(word) || word.length() == 0) {
+        word = word.toLowerCase(Locale.ROOT);
+
+        if (wordIsInLatin(word) || wordIsNumeric(word)) {
             return word;
+        } else if (word.length() == 0 || wordIsFunctional(word)) {
+            return "";
         }
 
         try {
@@ -93,7 +99,14 @@ public class TextProcessor {
             return false;
         }
 
-        Character.UnicodeScript script = Character.UnicodeScript.of(word.charAt(0));
-        return script.equals(Character.UnicodeScript.LATIN);
+        return word.matches("[a-z]+");
+    }
+
+    private boolean wordIsNumeric(String word) {
+        return word.matches("\\d+");
+    }
+
+    public String removePunctuation(String query) {
+        return query.replaceAll("[^а-яa-z0-9]", " ").trim();
     }
 }
