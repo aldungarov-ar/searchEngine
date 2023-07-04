@@ -24,6 +24,7 @@ public class IndexingServiceImpl implements IndexingService {
     private static final Logger LOGGER = LogManager.getLogger(IndexingServiceImpl.class);
     private static final int TERMINATION_AWAIT_TIME_HOURS = 24;
     public static volatile boolean inProgress;
+    private static volatile boolean isStopped = false;
     private final SitesList sites;
     @Autowired
     private SiteRepository siteRepository;
@@ -44,8 +45,12 @@ public class IndexingServiceImpl implements IndexingService {
             return new RequestAnswer(false, "Indexing is already started");
         } else {
             inProgress = true;
+            new Thread(this::parseSites).start();
+            return new RequestAnswer(true);
         }
+    }
 
+    private RequestAnswer parseSites() {
         for (Site site : sites.getSites()) {
             siteRepository.deleteByUrl(site.getUrl());
         }
@@ -67,8 +72,14 @@ public class IndexingServiceImpl implements IndexingService {
 
             awaitPoolTermination();
 
-            site.setStatus(Status.INDEXED);
-            site.setStatusTime(LocalDateTime.now());
+            if (isStopped) {
+                isStopped = false;
+                return new RequestAnswer(false, "Indexing stopped by user");
+            }
+
+            siteSaved.setStatus(Status.INDEXED);
+            siteSaved.setStatusTime(LocalDateTime.now());
+            siteRepository.save(siteSaved);
         }
 
         System.out.println("Parsing complete");
@@ -93,6 +104,7 @@ public class IndexingServiceImpl implements IndexingService {
             return new RequestAnswer(false, "Indexing is not started");
         } else {
             inProgress = false;
+            isStopped = true;
         }
 
         pool.shutdownNow();

@@ -17,8 +17,8 @@ public class Lemma {
     private int id;
 
     @ManyToOne
-    @OnDelete(action = OnDeleteAction.CASCADE)
     @JoinColumn(name = "site_id")
+    @OnDelete(action = OnDeleteAction.CASCADE)
     private Site siteId;
 
     @Column(columnDefinition = "VARCHAR(255)", nullable = false)
@@ -27,6 +27,6 @@ public class Lemma {
     @Column(nullable = false)
     private int frequency;
 
-    @OneToMany(mappedBy = "lemmaId", cascade = CascadeType.REFRESH)
+    @OneToMany(mappedBy = "lemmaId")
     Set<Index> indexes;
 }

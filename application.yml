@@ -4,6 +4,11 @@ indexing-settings:
   sites:
     - url: https://www.playback.ru
       name: PlayBack.Ru
+    - url: https://et-cetera.ru/mobile/
+      name: EtCetera
+    - url: https://dombulgakova.ru/
+      name: DomBulgakova
+
 
 jsoup-connection-settings:
   userAgent: WondererSearchBot

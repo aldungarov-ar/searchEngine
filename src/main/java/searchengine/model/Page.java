@@ -38,6 +38,5 @@ public class Page {
     private String content;
 
     @OneToMany(mappedBy = "pageId")
-    @OnDelete(action = OnDeleteAction.CASCADE)
     Set<searchengine.model.Index> indexes;
 }

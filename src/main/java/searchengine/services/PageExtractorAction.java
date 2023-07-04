@@ -26,7 +26,7 @@ public class PageExtractorAction extends RecursiveAction {
     private static final String USER_AGENT = "WondererSearchBot";
     private static final String REFERRER = "http://www.google.com";
     private static final int MIN_DELAY = 50;
-    private static final int MAX_DELAY = 1000;
+    private static final int MAX_DELAY = 150;
 
     private final String url;
     private final List<String> controlList;

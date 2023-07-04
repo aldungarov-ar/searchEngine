@@ -1,6 +1,5 @@
 package searchengine.services;
 
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import searchengine.dto.IndexRepository;
@@ -31,7 +30,7 @@ public class SearchServiceImpl implements SearchService {
     }
 
     @Override
-    public RequestAnswer search(String query, int offset, int limit) {
+    public RequestAnswer search(String query, int offset, int limit, String site) {
         List<String> queryWords = splitQueryForLemmas(query);
 
         // ---------Checks if query is empty or no such lemmas was found in DB---------
@@ -41,12 +40,23 @@ public class SearchServiceImpl implements SearchService {
 
         List<Lemma> queryLemmas = new ArrayList<>();
         for (String queryWord : queryWords) {
-            queryLemmas.addAll(lemmaRepository.findByLemma(queryWord));
+            String lemma = textProcessor.getLemma(queryWord);
+            queryLemmas.addAll(lemmaRepository.findByLemma(lemma));
             if (queryLemmas.isEmpty()) {
                 return new RequestAnswer(false, "No results found");
             }
         }
         // -----------------------------------------------------------------------------
+
+        //----------Filter lemmas by site----------
+        if (site != null &&  !site.isEmpty()) {
+            queryLemmas.removeIf(lemma -> !lemma.getSiteId().getUrl().contains(site));
+        }
+
+        if (queryLemmas.isEmpty()) {
+            return new RequestAnswer(false, "No results found");
+        }
+        // -----------------------------------------
 
 
         //----------Removes high frequency lemmas and sorts from rare to common---------
@@ -120,13 +130,14 @@ public class SearchServiceImpl implements SearchService {
 
         //---------Creates Search result for each page---------
         ArrayList<SearchResult> searchResults = new ArrayList<>();
+        limit = Math.min(limit, sortedPages.size());
         for(int i = offset; i < limit; i++) {
             Page page = sortedPages.get(i);
             SearchResult searchResult = new SearchResult(page.getSiteId().getUrl(),
                     page.getSiteId().getName(),
                     page.getPath(),
                     getTitle(page),
-                    createSnippet(page.getContent(), query),
+                    textProcessor.createSnippet(page.getContent(), query, WORDS_AROUND),
                     pagesRelevance.get(page)[queryLemmas.size() + 1]);
             searchResults.add(searchResult);
         }
@@ -183,43 +194,4 @@ public class SearchServiceImpl implements SearchService {
             return bRelativeRelevance.compareTo(aRelativeRelevance);
         }
     }
-
-
-    /**
-     * Gets snippet from given text (pageContent) based on first word in a query
-     *
-     * @param pageContent text will be used for creating query
-     * @param query       string value of query
-     * @return snippet contains (WORDS_AROUND * 2) number of words if possible and surrounded by "...",
-     * each word of query surrounded by <b> tag
-     */
-    private String createSnippet(String pageContent, String query) {
-        String pageText = textProcessor.removePunctuation(pageContent);
-        String pageTextInLemmas = String.join(" ", textProcessor.countLemmas(pageText).keySet());
-        String queryLemma = textProcessor.getLemma(query.split(" ")[0]);
-
-        int queryLemmaIndex = pageTextInLemmas.indexOf(queryLemma);
-
-        if (queryLemmaIndex != -1) {
-            int snippetStartIndex = queryLemmaIndex - WORDS_AROUND * 2;
-            int snippetEndIndex = queryLemmaIndex + WORDS_AROUND * 2;
-
-            if (snippetStartIndex < 0) {
-                snippetStartIndex = 0;
-            }
-
-            if (snippetEndIndex > pageText.length()) {
-                snippetEndIndex = pageText.length();
-            }
-
-            String snippet = pageText.substring(snippetStartIndex, snippetEndIndex);
-            snippet = snippet.replaceAll(queryLemma, "<b>" + queryLemma + "</b>");
-            snippet = "..." + snippet + "...";
-
-            return snippet;
-        } else {
-            return "";
-        }
-    }
-
 }
