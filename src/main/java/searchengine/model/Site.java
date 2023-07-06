@@ -1,18 +1,17 @@
 package searchengine.model;
 
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.OnDelete;
-import org.hibernate.annotations.OnDeleteAction;
 
 import javax.persistence.*;
 import java.time.LocalDateTime;
 import java.util.Objects;
-import java.util.Set;
 
 @Setter
 @Getter
 @Entity(name = "site")
+@NoArgsConstructor
 public class Site {
 
     @Id
@@ -35,7 +34,14 @@ public class Site {
     @Column(name = "last_error", columnDefinition = "TEXT")
     private String lastError;
 
-    public void updateStatus(Status status) {
+    public Site(String url, String name) {
+        this.url = url;
+        this.name = name;
+
+        updateStatusAndTime(Status.INDEXING);
+    }
+
+    public void updateStatusAndTime(Status status) {
         this.status = status;
         statusTime = LocalDateTime.now();
     }

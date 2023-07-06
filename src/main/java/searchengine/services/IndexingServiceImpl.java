@@ -6,7 +6,10 @@ import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import searchengine.config.SitesList;
-import searchengine.dto.*;
+import searchengine.dto.IndexRepository;
+import searchengine.dto.LemmaRepository;
+import searchengine.dto.PageRepository;
+import searchengine.dto.SiteRepository;
 import searchengine.model.*;
 
 import java.net.URLDecoder;
@@ -112,7 +115,7 @@ public class IndexingServiceImpl implements IndexingService {
         List<Site> siteList = siteRepository.findAll();
         for (Site site : siteList) {
             if (site.getStatus() == Status.INDEXING) {
-                site.updateStatus(Status.FAILED);
+                site.updateStatusAndTime(Status.FAILED);
                 site.setLastError("Indexing stopped by user");
                 siteRepository.save(site);
             }
@@ -133,7 +136,7 @@ public class IndexingServiceImpl implements IndexingService {
 
         Site site = getActualSite(rootUrl);
         Status statusBeforeIndexing = site.getStatus() == null ? Status.FAILED : site.getStatus();
-        site.updateStatus(Status.INDEXING);
+        site.updateStatusAndTime(Status.INDEXING);
         siteRepository.save(site);
 
         String pagePath = "/" + url.split("/", 4)[3];
@@ -152,7 +155,7 @@ public class IndexingServiceImpl implements IndexingService {
         parser.quietlyComplete();
         parser.join();
 
-        site.updateStatus(statusBeforeIndexing);
+        site.updateStatusAndTime(statusBeforeIndexing);
         siteRepository.save(site);
 
         System.out.println("Page indexed");
@@ -176,15 +179,22 @@ public class IndexingServiceImpl implements IndexingService {
     }
 
     private Site getActualSite(String rootUrl) {
-        Site site = sites.getSiteByURL(rootUrl);
-        List<Site> sitesFromDB = siteRepository.findAll();
+        List<Site> siteListFromDB = siteRepository.findAll();
+        Site site = null;
 
-        if (sitesFromDB.contains(site)) {
-            for (Site s : sitesFromDB) {
-                if (s.equals(site)) {
-                    site = s;
-                }
+        for (Site siteFromList : siteListFromDB) {
+            if (siteFromList.getUrl().contains(rootUrl)) {
+                site = siteFromList;
+                break;
             }
+        }
+
+        if (site == null) {
+
+            site = sites.getSiteByURL(rootUrl);
+            site.updateStatusAndTime(Status.INDEXING);
+
+            siteRepository.save(site);
         }
 
         return site;
